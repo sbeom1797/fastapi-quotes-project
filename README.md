@@ -1,6 +1,5 @@
 ---
 title: FastAPI Quotes Project
-emoji: book
 colorFrom: blue
 colorTo: green
 sdk: docker
