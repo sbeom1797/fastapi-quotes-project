@@ -4,24 +4,45 @@ from io import StringIO
 import random
 import re
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 import gradio as gr
 import matplotlib
 import pandas as pd
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from database import create_table, get_connection
 
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib import font_manager
 
 
-plt.rcParams["font.family"] = ["Noto Sans CJK KR", "Malgun Gothic", "DejaVu Sans"]
+AVAILABLE_FONTS = {font.name for font in font_manager.fontManager.ttflist}
+for font_name in ("Noto Sans CJK KR", "Malgun Gothic", "DejaVu Sans"):
+    if font_name in AVAILABLE_FONTS:
+        plt.rcParams["font.family"] = font_name
+        break
 plt.rcParams["axes.unicode_minus"] = False
 
-app = FastAPI(title="명언 프로젝트")
+API_TAGS = [
+    {"name": "홈", "description": "서비스 첫 화면과 주요 링크입니다."},
+    {"name": "수집", "description": "quotes.toscrape.com에서 명언을 수집합니다."},
+    {"name": "명언 관리", "description": "명언 데이터를 생성, 조회, 수정, 삭제합니다."},
+    {"name": "분석", "description": "단어 빈도수와 기초 통계를 제공합니다."},
+    {"name": "내보내기", "description": "저장된 명언 데이터를 파일로 내려받습니다."},
+]
+
+app = FastAPI(
+    title="명언 프로젝트 API",
+    description=(
+        "quotes.toscrape.com에서 수집한 명언 데이터를 SQLite에 저장하고, "
+        "FastAPI와 Gradio로 조회, 관리, 분석할 수 있는 프로젝트입니다."
+    ),
+    version="1.0.0",
+    openapi_tags=API_TAGS,
+)
 
 
 STOPWORDS = {
@@ -33,12 +54,13 @@ STOPWORDS = {
 }
 
 ALL_CATEGORIES = "전체"
+ALL_AUTHORS = "전체 작성자"
 
 
 class Quote(BaseModel):
-    text: str
-    author: str
-    category: str
+    text: str = Field(..., title="명언", description="저장할 명언 문장입니다.")
+    author: str = Field(..., title="작성자", description="명언을 남긴 작성자입니다.")
+    category: str = Field(..., title="카테고리", description="명언의 주제 또는 태그입니다.")
 
 
 @app.on_event("startup")
@@ -46,7 +68,13 @@ def startup():
     create_table()
 
 
-@app.get("/", response_class=HTMLResponse)
+@app.get(
+    "/",
+    response_class=HTMLResponse,
+    tags=["홈"],
+    summary="서비스 홈 화면",
+    description="명언 프로젝트의 주요 API와 Gradio 대시보드 링크를 보여줍니다.",
+)
 def home():
     return """
     <!doctype html>
@@ -83,27 +111,54 @@ def home():
         <p><a href="/export/csv">명언 CSV 다운로드</a></p>
         <p><a href="/gradio">Gradio 대시보드 열기</a></p>
         <p>API 문서: <a href="/docs">/docs</a></p>
-        <p>샘플 데이터를 수집하려면 문서에서 <code>POST /crawl/life</code>를 실행하세요.</p>
+        <p>샘플 데이터를 수집하려면 문서에서 <code>POST /crawl/default-categories</code>를 실행하세요.</p>
       </body>
     </html>
     """
 
 
-@app.post("/crawl/{category}")
-def crawl(category: str):
+@app.post(
+    "/crawl/{category}",
+    tags=["수집"],
+    summary="카테고리별 명언 수집",
+    description="quotes.toscrape.com에서 지정한 카테고리의 명언을 수집하여 SQLite에 저장합니다.",
+)
+def crawl(
+    category: str = Path(..., description="수집할 카테고리입니다. 예: life, love, books")
+):
     try:
         from crawler import crawl_quotes
     except ImportError as exc:
         raise HTTPException(
             status_code=500,
-            detail="Crawler dependencies are missing. Run: python -m pip install beautifulsoup4 requests",
+            detail="크롤러 의존성이 없습니다. python -m pip install beautifulsoup4 requests 를 실행하세요.",
         ) from exc
 
     count = crawl_quotes(category)
-    return {"message": f"Saved {count} quotes for category '{category}'."}
+    return {"message": f"'{category}' 카테고리 명언 {count}개를 저장했습니다."}
 
 
-@app.post("/quotes")
+@app.post(
+    "/crawl/default-categories",
+    tags=["수집"],
+    summary="기본 카테고리 여러 개 수집",
+    description="life, love, books, inspirational, humor 카테고리의 명언을 한 번에 수집합니다.",
+)
+def crawl_default_categories(
+    limit: int = Query(20, ge=1, le=20, description="카테고리마다 수집할 최대 명언 개수입니다.")
+):
+    from crawler import DEFAULT_CATEGORIES, crawl_multiple_categories
+
+    results = crawl_multiple_categories(DEFAULT_CATEGORIES, limit)
+    return {"message": "기본 카테고리 수집이 완료되었습니다.", "results": results}
+
+
+@app.post(
+    "/quotes",
+    tags=["명언 관리"],
+    summary="명언 추가",
+    description="새 명언을 데이터베이스에 추가합니다.",
+)
 def create_quote(quote: Quote):
     conn = get_connection()
     cur = conn.cursor()
@@ -113,10 +168,15 @@ def create_quote(quote: Quote):
     )
     conn.commit()
     conn.close()
-    return {"message": "Quote created."}
+    return {"message": "명언이 추가되었습니다."}
 
 
-@app.get("/quotes")
+@app.get(
+    "/quotes",
+    tags=["명언 관리"],
+    summary="전체 명언 조회",
+    description="데이터베이스에 저장된 모든 명언을 조회합니다.",
+)
 def read_quotes():
     conn = get_connection()
     cur = conn.cursor()
@@ -129,8 +189,13 @@ def read_quotes():
     ]
 
 
-@app.get("/quotes/{quote_id}")
-def read_quote(quote_id: int):
+@app.get(
+    "/quotes/{quote_id}",
+    tags=["명언 관리"],
+    summary="명언 단건 조회",
+    description="ID로 특정 명언 하나를 조회합니다.",
+)
+def read_quote(quote_id: int = Path(..., description="조회할 명언 ID입니다.")):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("SELECT id, text, author, category FROM quotes WHERE id = ?", (quote_id,))
@@ -138,13 +203,21 @@ def read_quote(quote_id: int):
     conn.close()
 
     if row is None:
-        raise HTTPException(status_code=404, detail="Quote not found.")
+        raise HTTPException(status_code=404, detail="명언을 찾을 수 없습니다.")
 
     return {"id": row[0], "text": row[1], "author": row[2], "category": row[3]}
 
 
-@app.put("/quotes/{quote_id}")
-def update_quote(quote_id: int, quote: Quote):
+@app.put(
+    "/quotes/{quote_id}",
+    tags=["명언 관리"],
+    summary="명언 수정",
+    description="ID로 특정 명언의 문장, 작성자, 카테고리를 수정합니다.",
+)
+def update_quote(
+    quote: Quote,
+    quote_id: int = Path(..., description="수정할 명언 ID입니다."),
+):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute(
@@ -156,13 +229,18 @@ def update_quote(quote_id: int, quote: Quote):
     conn.close()
 
     if updated == 0:
-        raise HTTPException(status_code=404, detail="Quote not found.")
+        raise HTTPException(status_code=404, detail="명언을 찾을 수 없습니다.")
 
-    return {"message": "Quote updated."}
+    return {"message": "명언이 수정되었습니다."}
 
 
-@app.delete("/quotes/{quote_id}")
-def delete_quote(quote_id: int):
+@app.delete(
+    "/quotes/{quote_id}",
+    tags=["명언 관리"],
+    summary="명언 삭제",
+    description="ID로 특정 명언을 삭제합니다.",
+)
+def delete_quote(quote_id: int = Path(..., description="삭제할 명언 ID입니다.")):
     conn = get_connection()
     cur = conn.cursor()
     cur.execute("DELETE FROM quotes WHERE id = ?", (quote_id,))
@@ -171,23 +249,43 @@ def delete_quote(quote_id: int):
     conn.close()
 
     if deleted == 0:
-        raise HTTPException(status_code=404, detail="Quote not found.")
+        raise HTTPException(status_code=404, detail="명언을 찾을 수 없습니다.")
 
-    return {"message": "Quote deleted."}
+    return {"message": "명언이 삭제되었습니다."}
 
 
-@app.get("/word-count")
-def word_count(limit: int = 10, include_stopwords: bool = False):
+@app.get(
+    "/word-count",
+    tags=["분석"],
+    summary="단어 빈도수 조회",
+    description="저장된 명언 텍스트에서 자주 등장하는 단어와 빈도수를 계산합니다.",
+)
+def word_count(
+    limit: int = Query(10, ge=1, le=100, description="조회할 상위 단어 개수입니다."),
+    include_stopwords: bool = Query(False, description="the, and 같은 흔한 단어를 포함할지 선택합니다."),
+):
     return word_count_records(limit=limit, include_stopwords=include_stopwords)
 
 
-@app.get("/stats")
+@app.get(
+    "/stats",
+    tags=["분석"],
+    summary="기초 통계 조회",
+    description="전체 명언 수, 작성자 수, 카테고리 수, 평균/최소/최대 길이를 조회합니다.",
+)
 def stats():
     return basic_stats()
 
 
-@app.get("/random-quote")
-def random_quote(category: str | None = None):
+@app.get(
+    "/random-quote",
+    tags=["분석"],
+    summary="랜덤 명언 조회",
+    description="전체 또는 특정 카테고리에서 랜덤 명언 하나를 조회합니다.",
+)
+def random_quote(
+    category: str | None = Query(None, description="선택적으로 필터링할 카테고리입니다.")
+):
     conn = get_connection()
     cur = conn.cursor()
     if category:
@@ -201,13 +299,18 @@ def random_quote(category: str | None = None):
     conn.close()
 
     if not rows:
-        raise HTTPException(status_code=404, detail="No quotes found.")
+        raise HTTPException(status_code=404, detail="명언이 없습니다.")
 
     row = random.choice(rows)
     return {"id": row[0], "text": row[1], "author": row[2], "category": row[3]}
 
 
-@app.get("/export/csv")
+@app.get(
+    "/export/csv",
+    tags=["내보내기"],
+    summary="CSV 다운로드",
+    description="저장된 모든 명언을 CSV 파일로 다운로드합니다.",
+)
 def export_csv():
     conn = get_connection()
     cur = conn.cursor()
@@ -228,9 +331,9 @@ def export_csv():
     )
 
 
-def quotes_dataframe(search_text="", category="All"):
+def quotes_dataframe(search_text="", category="All", author=ALL_AUTHORS, favorites_only=False):
     conn = get_connection()
-    query = "SELECT id, text, author, category FROM quotes"
+    query = "SELECT id, text, author, category, favorite FROM quotes"
     params = []
     filters = []
 
@@ -243,20 +346,31 @@ def quotes_dataframe(search_text="", category="All"):
         filters.append("category = ?")
         params.append(category)
 
+    if author and author != ALL_AUTHORS:
+        filters.append("author = ?")
+        params.append(author)
+
+    if favorites_only:
+        filters.append("favorite = 1")
+
     if filters:
         query += " WHERE " + " AND ".join(filters)
 
     query += " ORDER BY id DESC"
     df = pd.read_sql_query(query, conn, params=params)
     conn.close()
-    return df.rename(
+    df = df.rename(
         columns={
             "id": "ID",
             "text": "명언",
             "author": "작성자",
             "category": "카테고리",
+            "favorite": "즐겨찾기",
         }
     )
+    if "즐겨찾기" in df.columns:
+        df["즐겨찾기"] = df["즐겨찾기"].map({1: "★", 0: ""})
+    return df
 
 
 def category_choices():
@@ -266,6 +380,15 @@ def category_choices():
     categories = [row[0] for row in cur.fetchall()]
     conn.close()
     return [ALL_CATEGORIES] + categories
+
+
+def author_choices():
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT DISTINCT author FROM quotes ORDER BY author")
+    authors = [row[0] for row in cur.fetchall()]
+    conn.close()
+    return [ALL_AUTHORS] + authors
 
 
 def tokenize_quote_text(text, include_stopwords=False):
@@ -380,6 +503,42 @@ def crawl_quotes_ui(category, limit):
     return f"'{category}' 카테고리 명언 {saved}개를 저장했습니다.", quotes_dataframe()
 
 
+def crawl_default_categories_ui(limit):
+    from crawler import DEFAULT_CATEGORIES, crawl_multiple_categories
+
+    results = crawl_multiple_categories(DEFAULT_CATEGORIES, int(limit))
+    details = ", ".join(
+        f"{category}: {saved}개" for category, saved in results.items()
+    )
+    return f"기본 카테고리 수집 완료 ({details})", quotes_dataframe()
+
+
+def toggle_favorite_ui(quote_id):
+    if not quote_id:
+        return "즐겨찾기에 추가하거나 해제할 명언 ID를 입력해 주세요.", quotes_dataframe(), favorites_dataframe()
+
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT favorite FROM quotes WHERE id = ?", (int(quote_id),))
+    row = cur.fetchone()
+
+    if row is None:
+        conn.close()
+        return f"ID {int(quote_id)}에 해당하는 명언을 찾을 수 없습니다.", quotes_dataframe(), favorites_dataframe()
+
+    next_value = 0 if row[0] else 1
+    cur.execute("UPDATE quotes SET favorite = ? WHERE id = ?", (next_value, int(quote_id)))
+    conn.commit()
+    conn.close()
+
+    message = "즐겨찾기에 추가했습니다." if next_value else "즐겨찾기에서 해제했습니다."
+    return message, quotes_dataframe(), favorites_dataframe()
+
+
+def favorites_dataframe():
+    return quotes_dataframe(favorites_only=True)
+
+
 def word_count_dataframe(limit=10, include_stopwords=False):
     return pd.DataFrame(
         word_count_records(limit, include_stopwords),
@@ -478,6 +637,47 @@ def random_quote_text(selected_category=ALL_CATEGORIES):
     return f'"{quote["text"]}"\n- {quote["author"]} ({quote["category"]})'
 
 
+def today_quote_text():
+    return random_quote_text()
+
+
+def quiz_question(selected_category=ALL_CATEGORIES):
+    category = None if selected_category in ("All", ALL_CATEGORIES) else selected_category
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if category:
+        cur.execute("SELECT text, author, category FROM quotes WHERE category = ?", (category,))
+    else:
+        cur.execute("SELECT text, author, category FROM quotes")
+    quotes = cur.fetchall()
+
+    cur.execute("SELECT DISTINCT author FROM quotes ORDER BY author")
+    authors = [row[0] for row in cur.fetchall()]
+    conn.close()
+
+    if not quotes:
+        return "퀴즈를 만들 명언이 없습니다.", gr.Dropdown(choices=[], value=None), "", ""
+
+    correct_text, correct_author, quote_category = random.choice(quotes)
+    wrong_authors = [author for author in authors if author != correct_author]
+    options = random.sample(wrong_authors, min(3, len(wrong_authors))) + [correct_author]
+    random.shuffle(options)
+
+    question = f'"{correct_text}"\n\n이 명언을 남긴 사람은 누구일까요? ({quote_category})'
+    return question, gr.Dropdown(choices=options, value=None), correct_author, ""
+
+
+def check_quiz_answer(selected_author, correct_author):
+    if not correct_author:
+        return "먼저 새 퀴즈를 만들어 주세요."
+    if not selected_author:
+        return "정답을 선택해 주세요."
+    if selected_author == correct_author:
+        return "정답입니다!"
+    return f"아쉽지만 오답입니다. 정답은 {correct_author}입니다."
+
+
 def summary_text():
     stats = basic_stats()
     return (
@@ -545,17 +745,27 @@ def refresh_analytics(word_limit=10, include_stopwords=False, selected_category=
     )
 
 
-def refresh_dashboard(search_text="", selected_category=ALL_CATEGORIES, word_limit=10, include_stopwords=False):
-    analytics_outputs = refresh_analytics(word_limit, include_stopwords, selected_category)
+def refresh_dashboard(
+    search_text="",
+    selected_category=ALL_CATEGORIES,
+    selected_author=ALL_AUTHORS,
+    word_limit=10,
+    include_stopwords=False,
+):
     return (
-        quotes_dataframe(search_text, selected_category),
-        *analytics_outputs,
+        quotes_dataframe(search_text, selected_category, selected_author),
         gr.Dropdown(choices=category_choices(), value=selected_category),
+        gr.Dropdown(choices=author_choices(), value=selected_author),
+        today_quote_text(),
     )
+
+
+create_table()
 
 
 with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     gr.Markdown("# 명언 프로젝트 대시보드")
+    today_quote_box = gr.Textbox(label="오늘의 명언", lines=3, interactive=False)
 
     with gr.Row():
         search_input = gr.Textbox(label="검색", placeholder="명언, 작성자, 카테고리 검색")
@@ -563,6 +773,11 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             label="카테고리",
             choices=category_choices(),
             value=ALL_CATEGORIES,
+        )
+        author_filter = gr.Dropdown(
+            label="작성자",
+            choices=author_choices(),
+            value=ALL_AUTHORS,
         )
         refresh_btn = gr.Button("새로고침", variant="primary")
 
@@ -590,6 +805,25 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         crawl_category = gr.Textbox(label="카테고리", value="life")
         crawl_limit = gr.Slider(label="수집 개수", minimum=1, maximum=20, value=20, step=1)
         crawl_btn = gr.Button("명언 수집", variant="primary")
+        crawl_default_btn = gr.Button("기본 카테고리 5개 수집", variant="primary")
+
+    with gr.Tab("즐겨찾기"):
+        favorite_id = gr.Number(label="명언 ID", precision=0)
+        favorite_btn = gr.Button("즐겨찾기 추가/해제", variant="primary")
+        favorites_table = gr.Dataframe(label="즐겨찾기 목록", interactive=False)
+
+    with gr.Tab("퀴즈"):
+        quiz_category = gr.Dropdown(
+            label="퀴즈 카테고리",
+            choices=category_choices(),
+            value=ALL_CATEGORIES,
+        )
+        quiz_btn = gr.Button("새 퀴즈 만들기", variant="primary")
+        quiz_question_box = gr.Textbox(label="문제", lines=5, interactive=False)
+        quiz_answer = gr.Dropdown(label="작성자 선택", choices=[])
+        quiz_check_btn = gr.Button("정답 확인", variant="primary")
+        quiz_result = gr.Textbox(label="결과", interactive=False)
+        quiz_correct_author = gr.State("")
 
     with gr.Tab("분석"):
         with gr.Row():
@@ -612,17 +846,9 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
 
     refresh_outputs = [
         quotes_table,
-        summary_box,
-        word_table,
-        category_table,
-        author_table,
-        longest_table,
-        word_plot,
-        category_plot,
-        author_plot,
-        length_plot,
-        random_quote_box,
         category_filter,
+        author_filter,
+        today_quote_box,
     ]
 
     analytics_outputs = [
@@ -640,17 +866,22 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
 
     refresh_btn.click(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
         outputs=refresh_outputs,
     )
     search_input.submit(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
         outputs=refresh_outputs,
     )
     category_filter.change(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        outputs=refresh_outputs,
+    )
+    author_filter.change(
+        fn=refresh_dashboard,
+        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
         outputs=refresh_outputs,
     )
     analytics_refresh_btn.click(
@@ -689,9 +920,29 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         inputs=[crawl_category, crawl_limit],
         outputs=[status_output, quotes_table],
     )
+    crawl_default_btn.click(
+        fn=crawl_default_categories_ui,
+        inputs=[crawl_limit],
+        outputs=[status_output, quotes_table],
+    )
+    favorite_btn.click(
+        fn=toggle_favorite_ui,
+        inputs=[favorite_id],
+        outputs=[status_output, quotes_table, favorites_table],
+    )
+    quiz_btn.click(
+        fn=quiz_question,
+        inputs=[quiz_category],
+        outputs=[quiz_question_box, quiz_answer, quiz_correct_author, quiz_result],
+    )
+    quiz_check_btn.click(
+        fn=check_quiz_answer,
+        inputs=[quiz_answer, quiz_correct_author],
+        outputs=[quiz_result],
+    )
     gradio_app.load(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
         outputs=refresh_outputs,
     )
 

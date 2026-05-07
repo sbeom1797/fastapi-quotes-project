@@ -5,6 +5,9 @@ from urllib.parse import urljoin
 from database import get_connection
 
 
+DEFAULT_CATEGORIES = ["life", "love", "books", "inspirational", "humor"]
+
+
 def crawl_quotes(category="life", limit=20):
     url = f"https://quotes.toscrape.com/tag/{category}/"
     collected = []
@@ -33,12 +36,25 @@ def crawl_quotes(category="life", limit=20):
 
     for text, author, quote_category in collected:
         cur.execute(
-            "INSERT INTO quotes (text, author, category) VALUES (?, ?, ?)",
+            "INSERT OR IGNORE INTO quotes (text, author, category) VALUES (?, ?, ?)",
             (text, author, quote_category)
         )
-        saved += 1
+        saved += cur.rowcount
 
     conn.commit()
     conn.close()
 
     return saved
+
+
+def crawl_multiple_categories(categories=None, limit=20):
+    categories = categories or DEFAULT_CATEGORIES
+    results = {}
+
+    for category in categories:
+        normalized = category.strip()
+        if not normalized:
+            continue
+        results[normalized] = crawl_quotes(normalized, limit)
+
+    return results

@@ -14,8 +14,19 @@ def create_table():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         text TEXT NOT NULL,
         author TEXT NOT NULL,
-        category TEXT NOT NULL
+        category TEXT NOT NULL,
+        favorite INTEGER NOT NULL DEFAULT 0
     )
+    """)
+
+    cur.execute("PRAGMA table_info(quotes)")
+    columns = [row[1] for row in cur.fetchall()]
+    if "favorite" not in columns:
+        cur.execute("ALTER TABLE quotes ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0")
+
+    cur.execute("""
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_text_author_category
+    ON quotes (text, author, category)
     """)
 
     conn.commit()
