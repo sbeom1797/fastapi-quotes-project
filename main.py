@@ -961,24 +961,24 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     status_output = gr.Textbox(label="처리 상태", interactive=False)
 
     with gr.Tabs():
-        with gr.Tab("추가"):
+        with gr.Tab("추가", render_children=True):
             new_text = gr.Textbox(label="명언", lines=3)
             new_author = gr.Textbox(label="작성자")
             new_category = gr.Textbox(label="카테고리", value="life")
             create_btn = gr.Button("명언 추가", variant="primary")
 
-        with gr.Tab("수정"):
+        with gr.Tab("수정", render_children=True):
             update_id = gr.Number(label="명언 ID", precision=0)
             update_text = gr.Textbox(label="명언", lines=3)
             update_author = gr.Textbox(label="작성자")
             update_category = gr.Textbox(label="카테고리")
             update_btn = gr.Button("명언 수정", variant="primary")
 
-        with gr.Tab("삭제"):
+        with gr.Tab("삭제", render_children=True):
             delete_id = gr.Number(label="명언 ID", precision=0)
             delete_btn = gr.Button("명언 삭제", variant="stop")
 
-        with gr.Tab("수집"):
+        with gr.Tab("수집", render_children=True):
             crawl_category = gr.Textbox(label="카테고리", value="life")
             crawl_limit = gr.Slider(label="수집 개수", minimum=1, maximum=20, value=20, step=1)
             crawl_btn = gr.Button("명언 수집", variant="primary")
@@ -986,12 +986,12 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             crawl_all_tags_pages = gr.Slider(label="전체 태그 수집 페이지 수", minimum=1, maximum=10, value=10, step=1)
             crawl_all_tags_btn = gr.Button("전체 사이트 태그 수집", variant="primary")
 
-        with gr.Tab("즐겨찾기"):
+        with gr.Tab("즐겨찾기", render_children=True):
             favorite_id = gr.Number(label="명언 ID", precision=0)
             favorite_btn = gr.Button("즐겨찾기 추가/해제", variant="primary")
             favorites_table = gr.Dataframe(label="즐겨찾기 목록", interactive=False)
 
-        with gr.Tab("퀴즈"):
+        with gr.Tab("퀴즈", render_children=True):
             quiz_category = gr.Dropdown(
                 label="퀴즈 카테고리",
                 choices=category_choices(),
@@ -1004,7 +1004,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             quiz_result = gr.Textbox(label="결과", interactive=False)
             quiz_correct_author = gr.State("")
 
-        with gr.Tab("추천"):
+        with gr.Tab("추천", render_children=True):
             situation_input = gr.Textbox(
                 label="지금 상황이나 기분",
                 placeholder="예: 면접 앞두고 긴장돼, 공부 자극이 필요해, 친구에게 위로를 전하고 싶어",
@@ -1015,7 +1015,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             situation_output = gr.Textbox(label="추천 결과", lines=5, interactive=False)
             situation_table = gr.Dataframe(label="관련 명언 목록", interactive=False)
 
-        with gr.Tab("명언 카드"):
+        with gr.Tab("명언 카드", render_children=True):
             with gr.Row():
                 card_quote_id = gr.Number(label="명언 ID", precision=0)
                 card_category = gr.Dropdown(
@@ -1032,7 +1032,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             card_status = gr.Textbox(label="카드 상태", interactive=False)
             card_plot = gr.Plot(label="명언 카드")
 
-        with gr.Tab("분석"):
+        with gr.Tab("분석", render_children=True):
             with gr.Row():
                 word_limit = gr.Slider(label="단어 표시 개수", minimum=5, maximum=30, value=10, step=1)
                 include_stopwords = gr.Checkbox(label="흔한 단어 포함", value=False)
@@ -1073,22 +1073,22 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
 
     refresh_btn.click(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
     )
     search_input.submit(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
     )
     category_filter.change(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
     )
     author_filter.change(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
     )
     analytics_refresh_btn.click(
@@ -1164,7 +1164,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     )
     gradio_app.load(
         fn=refresh_dashboard,
-        inputs=[search_input, category_filter, author_filter, word_limit, include_stopwords],
+        inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
     )
 
