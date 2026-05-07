@@ -1,6 +1,9 @@
+import json
+from pathlib import Path
 import sqlite3
 
 DB_NAME = "quotes.db"
+SEED_FILE = Path(__file__).with_name("seed_quotes.json")
 
 def get_connection():
     return sqlite3.connect(DB_NAME)
@@ -28,6 +31,22 @@ def create_table():
     CREATE UNIQUE INDEX IF NOT EXISTS idx_quotes_text_author_category
     ON quotes (text, author, category)
     """)
+
+    if SEED_FILE.exists():
+        seed_quotes = json.loads(SEED_FILE.read_text(encoding="utf-8"))
+        for quote in seed_quotes:
+            cur.execute(
+                """
+                INSERT OR IGNORE INTO quotes (text, author, category, favorite)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    quote["text"],
+                    quote["author"],
+                    quote["category"],
+                    int(quote.get("favorite", 0)),
+                ),
+            )
 
     conn.commit()
     conn.close()

@@ -142,7 +142,7 @@ def crawl(
     "/crawl/default-categories",
     tags=["수집"],
     summary="기본 카테고리 여러 개 수집",
-    description="life, love, books, inspirational, humor 카테고리의 명언을 한 번에 수집합니다.",
+    description="기본으로 지정한 여러 카테고리의 명언을 한 번에 수집합니다.",
 )
 def crawl_default_categories(
     limit: int = Query(20, ge=1, le=20, description="카테고리마다 수집할 최대 명언 개수입니다.")
@@ -151,6 +151,21 @@ def crawl_default_categories(
 
     results = crawl_multiple_categories(DEFAULT_CATEGORIES, limit)
     return {"message": "기본 카테고리 수집이 완료되었습니다.", "results": results}
+
+
+@app.post(
+    "/crawl/all-tags",
+    tags=["수집"],
+    summary="전체 사이트 태그 수집",
+    description="quotes.toscrape.com 전체 페이지를 순회하며 각 명언의 태그를 카테고리로 저장합니다.",
+)
+def crawl_all_tags(
+    max_pages: int = Query(10, ge=1, le=10, description="수집할 최대 페이지 수입니다.")
+):
+    from crawler import crawl_all_quote_tags
+
+    result = crawl_all_quote_tags(max_pages)
+    return {"message": "전체 태그 수집이 완료되었습니다.", "result": result}
 
 
 @app.post(
@@ -513,6 +528,16 @@ def crawl_default_categories_ui(limit):
     return f"기본 카테고리 수집 완료 ({details})", quotes_dataframe()
 
 
+def crawl_all_tags_ui(max_pages):
+    from crawler import crawl_all_quote_tags
+
+    result = crawl_all_quote_tags(int(max_pages))
+    return (
+        f"전체 태그 수집 완료: {result['pages']}페이지에서 {result['saved']}개 저장",
+        quotes_dataframe(),
+    )
+
+
 def toggle_favorite_ui(quote_id):
     if not quote_id:
         return "즐겨찾기에 추가하거나 해제할 명언 ID를 입력해 주세요.", quotes_dataframe(), favorites_dataframe()
@@ -805,7 +830,9 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         crawl_category = gr.Textbox(label="카테고리", value="life")
         crawl_limit = gr.Slider(label="수집 개수", minimum=1, maximum=20, value=20, step=1)
         crawl_btn = gr.Button("명언 수집", variant="primary")
-        crawl_default_btn = gr.Button("기본 카테고리 5개 수집", variant="primary")
+        crawl_default_btn = gr.Button("기본 카테고리 20개 수집", variant="primary")
+        crawl_all_tags_pages = gr.Slider(label="전체 태그 수집 페이지 수", minimum=1, maximum=10, value=10, step=1)
+        crawl_all_tags_btn = gr.Button("전체 사이트 태그 수집", variant="primary")
 
     with gr.Tab("즐겨찾기"):
         favorite_id = gr.Number(label="명언 ID", precision=0)
@@ -923,6 +950,11 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     crawl_default_btn.click(
         fn=crawl_default_categories_ui,
         inputs=[crawl_limit],
+        outputs=[status_output, quotes_table],
+    )
+    crawl_all_tags_btn.click(
+        fn=crawl_all_tags_ui,
+        inputs=[crawl_all_tags_pages],
         outputs=[status_output, quotes_table],
     )
     favorite_btn.click(
