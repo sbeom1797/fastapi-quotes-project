@@ -3,6 +3,7 @@ import csv
 from io import StringIO
 import random
 import re
+import textwrap
 
 from fastapi import FastAPI, HTTPException, Path, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
@@ -703,6 +704,152 @@ def check_quiz_answer(selected_author, correct_author):
     return f"아쉽지만 오답입니다. 정답은 {correct_author}입니다."
 
 
+SITUATION_KEYWORDS = {
+    "힘": ["inspirational", "hope", "success", "life"],
+    "위로": ["hope", "life", "happiness"],
+    "슬픔": ["hope", "life", "death"],
+    "사랑": ["love", "romantic", "heartbreak"],
+    "친구": ["friendship", "friends"],
+    "우정": ["friendship", "friends"],
+    "공부": ["books", "reading", "knowledge", "learning"],
+    "독서": ["books", "reading", "library"],
+    "책": ["books", "reading", "library"],
+    "글": ["writing", "writers", "poetry"],
+    "작가": ["writing", "writers", "books"],
+    "성공": ["success", "inspirational"],
+    "도전": ["adventure", "success", "inspirational"],
+    "면접": ["success", "inspirational", "truth"],
+    "행복": ["happiness", "life", "humor"],
+    "웃음": ["humor", "happiness"],
+    "진실": ["truth", "philosophy"],
+    "인생": ["life", "philosophy", "inspirational"],
+}
+
+
+def recommend_quotes_for_situation(situation, limit=5):
+    if not situation:
+        return "상황이나 기분을 입력해 주세요.", pd.DataFrame(columns=["ID", "명언", "작성자", "카테고리"])
+
+    normalized = situation.lower()
+    matched_categories = []
+    for keyword, categories in SITUATION_KEYWORDS.items():
+        if keyword in normalized:
+            matched_categories.extend(categories)
+
+    conn = get_connection()
+    params = []
+    filters = []
+
+    if matched_categories:
+        placeholders = ",".join("?" for _ in matched_categories)
+        filters.append(f"category IN ({placeholders})")
+        params.extend(matched_categories)
+
+    for token in re.findall(r"[a-zA-Z가-힣]+", normalized):
+        if len(token) >= 2:
+            filters.append("(LOWER(text) LIKE ? OR LOWER(author) LIKE ? OR LOWER(category) LIKE ?)")
+            like_value = f"%{token}%"
+            params.extend([like_value, like_value, like_value])
+
+    if filters:
+        query = (
+            "SELECT id, text, author, category FROM quotes WHERE "
+            + " OR ".join(filters)
+            + " ORDER BY RANDOM() LIMIT ?"
+        )
+        params.append(int(limit))
+    else:
+        query = "SELECT id, text, author, category FROM quotes ORDER BY RANDOM() LIMIT ?"
+        params.append(int(limit))
+
+    df = pd.read_sql_query(query, conn, params=params)
+    conn.close()
+
+    if df.empty:
+        return "관련 명언을 찾지 못했습니다. 다른 표현으로 입력해 보세요.", pd.DataFrame(
+            columns=["ID", "명언", "작성자", "카테고리"]
+        )
+
+    recommended = df.iloc[0]
+    message = (
+        f"추천 명언\n"
+        f"\"{recommended['text']}\"\n"
+        f"- {recommended['author']} ({recommended['category']})"
+    )
+    return message, df.rename(
+        columns={
+            "id": "ID",
+            "text": "명언",
+            "author": "작성자",
+            "category": "카테고리",
+        }
+    )
+
+
+CARD_STYLES = {
+    "따뜻한 노을": {"bg": "#fff7ed", "accent": "#ea580c", "text": "#1f2937"},
+    "차분한 밤": {"bg": "#111827", "accent": "#60a5fa", "text": "#f9fafb"},
+    "숲": {"bg": "#ecfdf5", "accent": "#059669", "text": "#064e3b"},
+    "클래식": {"bg": "#f8fafc", "accent": "#334155", "text": "#0f172a"},
+}
+
+
+def select_quote_for_card(quote_id=None, category=ALL_CATEGORIES):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    if quote_id:
+        cur.execute(
+            "SELECT id, text, author, category FROM quotes WHERE id = ?",
+            (int(quote_id),),
+        )
+    elif category and category not in ("All", ALL_CATEGORIES):
+        cur.execute(
+            "SELECT id, text, author, category FROM quotes WHERE category = ? ORDER BY RANDOM() LIMIT 1",
+            (category,),
+        )
+    else:
+        cur.execute("SELECT id, text, author, category FROM quotes ORDER BY RANDOM() LIMIT 1")
+
+    row = cur.fetchone()
+    conn.close()
+    return row
+
+
+def make_quote_card(quote_id=None, category=ALL_CATEGORIES, style_name="따뜻한 노을"):
+    row = select_quote_for_card(quote_id, category)
+    style = CARD_STYLES.get(style_name, CARD_STYLES["따뜻한 노을"])
+    fig, ax = plt.subplots(figsize=(9, 5))
+    ax.set_facecolor(style["bg"])
+    fig.patch.set_facecolor(style["bg"])
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.axis("off")
+
+    if row is None:
+        ax.text(0.5, 0.5, "명언을 찾을 수 없습니다.", ha="center", va="center", color=style["text"])
+        return fig, "명언을 찾을 수 없습니다."
+
+    quote_id, text, author, category = row
+    wrapped_text = "\n".join(textwrap.wrap(text.strip("“”\""), width=38))
+    ax.axhline(0.88, xmin=0.08, xmax=0.92, color=style["accent"], linewidth=4)
+    ax.text(
+        0.5,
+        0.58,
+        f"“{wrapped_text}”",
+        ha="center",
+        va="center",
+        fontsize=18,
+        color=style["text"],
+        linespacing=1.5,
+        wrap=True,
+    )
+    ax.text(0.5, 0.25, f"- {author}", ha="center", va="center", fontsize=14, color=style["accent"])
+    ax.text(0.5, 0.14, f"#{category}  ID {quote_id}", ha="center", va="center", fontsize=10, color=style["text"])
+    fig.tight_layout()
+    return fig, f"명언 카드 생성 완료: ID {quote_id}"
+
+
 def summary_text():
     stats = basic_stats()
     return (
@@ -852,6 +999,34 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         quiz_result = gr.Textbox(label="결과", interactive=False)
         quiz_correct_author = gr.State("")
 
+    with gr.Tab("추천"):
+        situation_input = gr.Textbox(
+            label="지금 상황이나 기분",
+            placeholder="예: 면접 앞두고 긴장돼, 공부 자극이 필요해, 친구에게 위로를 전하고 싶어",
+            lines=2,
+        )
+        situation_limit = gr.Slider(label="추천 개수", minimum=1, maximum=10, value=5, step=1)
+        situation_btn = gr.Button("상황별 명언 추천", variant="primary")
+        situation_output = gr.Textbox(label="추천 결과", lines=5, interactive=False)
+        situation_table = gr.Dataframe(label="관련 명언 목록", interactive=False)
+
+    with gr.Tab("명언 카드"):
+        with gr.Row():
+            card_quote_id = gr.Number(label="명언 ID", precision=0)
+            card_category = gr.Dropdown(
+                label="카테고리",
+                choices=category_choices(),
+                value=ALL_CATEGORIES,
+            )
+            card_style = gr.Dropdown(
+                label="카드 스타일",
+                choices=list(CARD_STYLES.keys()),
+                value="따뜻한 노을",
+            )
+        card_btn = gr.Button("명언 카드 만들기", variant="primary")
+        card_status = gr.Textbox(label="카드 상태", interactive=False)
+        card_plot = gr.Plot(label="명언 카드")
+
     with gr.Tab("분석"):
         with gr.Row():
             word_limit = gr.Slider(label="단어 표시 개수", minimum=5, maximum=30, value=10, step=1)
@@ -971,6 +1146,16 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         fn=check_quiz_answer,
         inputs=[quiz_answer, quiz_correct_author],
         outputs=[quiz_result],
+    )
+    situation_btn.click(
+        fn=recommend_quotes_for_situation,
+        inputs=[situation_input, situation_limit],
+        outputs=[situation_output, situation_table],
+    )
+    card_btn.click(
+        fn=make_quote_card,
+        inputs=[card_quote_id, card_category, card_style],
+        outputs=[card_plot, card_status],
     )
     gradio_app.load(
         fn=refresh_dashboard,
