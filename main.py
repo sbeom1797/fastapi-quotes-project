@@ -496,20 +496,24 @@ def update_quote_ui(quote_id, text, author, category):
 
 
 def delete_quote_ui(quote_id):
-    if not quote_id:
-        return "삭제할 명언 ID를 입력해 주세요.", quotes_dataframe()
+    if quote_id is None:
+        return "삭제할 명언 ID를 입력하지 않았습니다. 명언 목록에서 ID를 확인한 뒤 다시 시도해 주세요.", quotes_dataframe()
+
+    quote_id = int(quote_id)
+    if quote_id <= 0:
+        return "삭제할 명언 ID는 1 이상의 숫자로 입력해 주세요.", quotes_dataframe()
 
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("DELETE FROM quotes WHERE id = ?", (int(quote_id),))
+    cur.execute("DELETE FROM quotes WHERE id = ?", (quote_id,))
     conn.commit()
     deleted = cur.rowcount
     conn.close()
 
     if deleted == 0:
-        return f"ID {int(quote_id)}에 해당하는 명언을 찾을 수 없습니다.", quotes_dataframe()
+        return f"ID {quote_id}에 해당하는 명언이 없어 삭제하지 않았습니다.", quotes_dataframe()
 
-    return "명언이 삭제되었습니다.", quotes_dataframe()
+    return f"ID {quote_id} 명언이 삭제되었습니다.", quotes_dataframe()
 
 
 def crawl_quotes_ui(category, limit):
@@ -956,95 +960,96 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     quotes_table = gr.Dataframe(label="명언 목록", interactive=False)
     status_output = gr.Textbox(label="처리 상태", interactive=False)
 
-    with gr.Tab("추가"):
-        new_text = gr.Textbox(label="명언", lines=3)
-        new_author = gr.Textbox(label="작성자")
-        new_category = gr.Textbox(label="카테고리", value="life")
-        create_btn = gr.Button("명언 추가", variant="primary")
+    with gr.Tabs():
+        with gr.Tab("추가"):
+            new_text = gr.Textbox(label="명언", lines=3)
+            new_author = gr.Textbox(label="작성자")
+            new_category = gr.Textbox(label="카테고리", value="life")
+            create_btn = gr.Button("명언 추가", variant="primary")
 
-    with gr.Tab("수정"):
-        update_id = gr.Number(label="명언 ID", precision=0)
-        update_text = gr.Textbox(label="명언", lines=3)
-        update_author = gr.Textbox(label="작성자")
-        update_category = gr.Textbox(label="카테고리")
-        update_btn = gr.Button("명언 수정", variant="primary")
+        with gr.Tab("수정"):
+            update_id = gr.Number(label="명언 ID", precision=0)
+            update_text = gr.Textbox(label="명언", lines=3)
+            update_author = gr.Textbox(label="작성자")
+            update_category = gr.Textbox(label="카테고리")
+            update_btn = gr.Button("명언 수정", variant="primary")
 
-    with gr.Tab("삭제"):
-        delete_id = gr.Number(label="명언 ID", precision=0)
-        delete_btn = gr.Button("명언 삭제", variant="stop")
+        with gr.Tab("삭제"):
+            delete_id = gr.Number(label="명언 ID", precision=0)
+            delete_btn = gr.Button("명언 삭제", variant="stop")
 
-    with gr.Tab("수집"):
-        crawl_category = gr.Textbox(label="카테고리", value="life")
-        crawl_limit = gr.Slider(label="수집 개수", minimum=1, maximum=20, value=20, step=1)
-        crawl_btn = gr.Button("명언 수집", variant="primary")
-        crawl_default_btn = gr.Button("기본 카테고리 20개 수집", variant="primary")
-        crawl_all_tags_pages = gr.Slider(label="전체 태그 수집 페이지 수", minimum=1, maximum=10, value=10, step=1)
-        crawl_all_tags_btn = gr.Button("전체 사이트 태그 수집", variant="primary")
+        with gr.Tab("수집"):
+            crawl_category = gr.Textbox(label="카테고리", value="life")
+            crawl_limit = gr.Slider(label="수집 개수", minimum=1, maximum=20, value=20, step=1)
+            crawl_btn = gr.Button("명언 수집", variant="primary")
+            crawl_default_btn = gr.Button("기본 카테고리 20개 수집", variant="primary")
+            crawl_all_tags_pages = gr.Slider(label="전체 태그 수집 페이지 수", minimum=1, maximum=10, value=10, step=1)
+            crawl_all_tags_btn = gr.Button("전체 사이트 태그 수집", variant="primary")
 
-    with gr.Tab("즐겨찾기"):
-        favorite_id = gr.Number(label="명언 ID", precision=0)
-        favorite_btn = gr.Button("즐겨찾기 추가/해제", variant="primary")
-        favorites_table = gr.Dataframe(label="즐겨찾기 목록", interactive=False)
+        with gr.Tab("즐겨찾기"):
+            favorite_id = gr.Number(label="명언 ID", precision=0)
+            favorite_btn = gr.Button("즐겨찾기 추가/해제", variant="primary")
+            favorites_table = gr.Dataframe(label="즐겨찾기 목록", interactive=False)
 
-    with gr.Tab("퀴즈"):
-        quiz_category = gr.Dropdown(
-            label="퀴즈 카테고리",
-            choices=category_choices(),
-            value=ALL_CATEGORIES,
-        )
-        quiz_btn = gr.Button("새 퀴즈 만들기", variant="primary")
-        quiz_question_box = gr.Textbox(label="문제", lines=5, interactive=False)
-        quiz_answer = gr.Dropdown(label="작성자 선택", choices=[])
-        quiz_check_btn = gr.Button("정답 확인", variant="primary")
-        quiz_result = gr.Textbox(label="결과", interactive=False)
-        quiz_correct_author = gr.State("")
-
-    with gr.Tab("추천"):
-        situation_input = gr.Textbox(
-            label="지금 상황이나 기분",
-            placeholder="예: 면접 앞두고 긴장돼, 공부 자극이 필요해, 친구에게 위로를 전하고 싶어",
-            lines=2,
-        )
-        situation_limit = gr.Slider(label="추천 개수", minimum=1, maximum=10, value=5, step=1)
-        situation_btn = gr.Button("상황별 명언 추천", variant="primary")
-        situation_output = gr.Textbox(label="추천 결과", lines=5, interactive=False)
-        situation_table = gr.Dataframe(label="관련 명언 목록", interactive=False)
-
-    with gr.Tab("명언 카드"):
-        with gr.Row():
-            card_quote_id = gr.Number(label="명언 ID", precision=0)
-            card_category = gr.Dropdown(
-                label="카테고리",
+        with gr.Tab("퀴즈"):
+            quiz_category = gr.Dropdown(
+                label="퀴즈 카테고리",
                 choices=category_choices(),
                 value=ALL_CATEGORIES,
             )
-            card_style = gr.Dropdown(
-                label="카드 스타일",
-                choices=list(CARD_STYLES.keys()),
-                value="따뜻한 노을",
-            )
-        card_btn = gr.Button("명언 카드 만들기", variant="primary")
-        card_status = gr.Textbox(label="카드 상태", interactive=False)
-        card_plot = gr.Plot(label="명언 카드")
+            quiz_btn = gr.Button("새 퀴즈 만들기", variant="primary")
+            quiz_question_box = gr.Textbox(label="문제", lines=5, interactive=False)
+            quiz_answer = gr.Dropdown(label="작성자 선택", choices=[])
+            quiz_check_btn = gr.Button("정답 확인", variant="primary")
+            quiz_result = gr.Textbox(label="결과", interactive=False)
+            quiz_correct_author = gr.State("")
 
-    with gr.Tab("분석"):
-        with gr.Row():
-            word_limit = gr.Slider(label="단어 표시 개수", minimum=5, maximum=30, value=10, step=1)
-            include_stopwords = gr.Checkbox(label="흔한 단어 포함", value=False)
-            analytics_refresh_btn = gr.Button("분석 새로고침", variant="primary")
-        summary_box = gr.Textbox(label="요약 통계", lines=4, interactive=False)
-        random_quote_box = gr.Textbox(label="랜덤 명언", lines=3, interactive=False)
-        with gr.Row():
-            word_plot = gr.Plot(label="단어 빈도")
-            category_plot = gr.Plot(label="카테고리별 개수")
-        with gr.Row():
-            author_plot = gr.Plot(label="작성자별 개수")
-            length_plot = gr.Plot(label="길이 분포")
-        with gr.Row():
-            word_table = gr.Dataframe(label="상위 단어", interactive=False)
-            category_table = gr.Dataframe(label="카테고리", interactive=False)
-            author_table = gr.Dataframe(label="상위 작성자", interactive=False)
-        longest_table = gr.Dataframe(label="가장 긴 명언", interactive=False)
+        with gr.Tab("추천"):
+            situation_input = gr.Textbox(
+                label="지금 상황이나 기분",
+                placeholder="예: 면접 앞두고 긴장돼, 공부 자극이 필요해, 친구에게 위로를 전하고 싶어",
+                lines=2,
+            )
+            situation_limit = gr.Slider(label="추천 개수", minimum=1, maximum=10, value=5, step=1)
+            situation_btn = gr.Button("상황별 명언 추천", variant="primary")
+            situation_output = gr.Textbox(label="추천 결과", lines=5, interactive=False)
+            situation_table = gr.Dataframe(label="관련 명언 목록", interactive=False)
+
+        with gr.Tab("명언 카드"):
+            with gr.Row():
+                card_quote_id = gr.Number(label="명언 ID", precision=0)
+                card_category = gr.Dropdown(
+                    label="카테고리",
+                    choices=category_choices(),
+                    value=ALL_CATEGORIES,
+                )
+                card_style = gr.Dropdown(
+                    label="카드 스타일",
+                    choices=list(CARD_STYLES.keys()),
+                    value="따뜻한 노을",
+                )
+            card_btn = gr.Button("명언 카드 만들기", variant="primary")
+            card_status = gr.Textbox(label="카드 상태", interactive=False)
+            card_plot = gr.Plot(label="명언 카드")
+
+        with gr.Tab("분석"):
+            with gr.Row():
+                word_limit = gr.Slider(label="단어 표시 개수", minimum=5, maximum=30, value=10, step=1)
+                include_stopwords = gr.Checkbox(label="흔한 단어 포함", value=False)
+                analytics_refresh_btn = gr.Button("분석 새로고침", variant="primary")
+            summary_box = gr.Textbox(label="요약 통계", lines=4, interactive=False)
+            random_quote_box = gr.Textbox(label="랜덤 명언", lines=3, interactive=False)
+            with gr.Row():
+                word_plot = gr.Plot(label="단어 빈도")
+                category_plot = gr.Plot(label="카테고리별 개수")
+            with gr.Row():
+                author_plot = gr.Plot(label="작성자별 개수")
+                length_plot = gr.Plot(label="길이 분포")
+            with gr.Row():
+                word_table = gr.Dataframe(label="상위 단어", interactive=False)
+                category_table = gr.Dataframe(label="카테고리", interactive=False)
+                author_table = gr.Dataframe(label="상위 작성자", interactive=False)
+            longest_table = gr.Dataframe(label="가장 긴 명언", interactive=False)
 
     refresh_outputs = [
         quotes_table,
