@@ -6,7 +6,7 @@ import re
 import textwrap
 
 from fastapi import FastAPI, HTTPException, Path, Query
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 import gradio as gr
 import matplotlib
 import pandas as pd
@@ -48,15 +48,6 @@ app = FastAPI(
 )
 
 
-@app.middleware("http")
-async def route_root_gradio_api_to_mounted_app(request, call_next):
-    if request.scope.get("path", "").startswith("/gradio_api"):
-        request.scope["path"] = "/gradio" + request.scope["path"]
-        if request.scope.get("raw_path"):
-            request.scope["raw_path"] = b"/gradio" + request.scope["raw_path"]
-    return await call_next(request)
-
-
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "has", "have", "he", "her", "his", "i", "if", "in", "is", "it", "its",
@@ -83,7 +74,7 @@ def startup():
 
 
 @app.get(
-    "/",
+    "/home",
     response_class=HTMLResponse,
     tags=["홈"],
     summary="서비스 홈 화면",
@@ -123,12 +114,22 @@ def home():
         <p><a href="/stats">기초 통계 JSON 보기</a></p>
         <p><a href="/random-quote">랜덤 명언 JSON 보기</a></p>
         <p><a href="/export/csv">명언 CSV 다운로드</a></p>
-        <p><a href="/gradio">Gradio 대시보드 열기</a></p>
+        <p><a href="/">Gradio 대시보드 열기</a></p>
         <p>API 문서: <a href="/docs">/docs</a></p>
         <p>샘플 데이터를 수집하려면 문서에서 <code>POST /crawl/default-categories</code>를 실행하세요.</p>
       </body>
     </html>
     """
+
+
+@app.get("/gradio", include_in_schema=False)
+def gradio_redirect():
+    return RedirectResponse(url="/")
+
+
+@app.get("/gradio/", include_in_schema=False)
+def gradio_slash_redirect():
+    return RedirectResponse(url="/")
 
 
 @app.post(
@@ -1402,4 +1403,4 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     )
 
 
-app = gr.mount_gradio_app(app, gradio_app, path="/gradio", root_path="/gradio")
+app = gr.mount_gradio_app(app, gradio_app, path="/")
