@@ -48,6 +48,15 @@ app = FastAPI(
 )
 
 
+@app.middleware("http")
+async def route_root_gradio_api_to_mounted_app(request, call_next):
+    if request.scope.get("path", "").startswith("/gradio_api"):
+        request.scope["path"] = "/gradio" + request.scope["path"]
+        if request.scope.get("raw_path"):
+            request.scope["raw_path"] = b"/gradio" + request.scope["raw_path"]
+    return await call_next(request)
+
+
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
     "has", "have", "he", "her", "his", "i", "if", "in", "is", "it", "its",
