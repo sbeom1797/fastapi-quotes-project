@@ -428,10 +428,7 @@ def category_choices():
     cur.execute("SELECT DISTINCT category FROM quotes ORDER BY category")
     categories = [row[0] for row in cur.fetchall()]
     conn.close()
-    return [
-        (ALL_CATEGORY_LABEL, ALL_CATEGORIES),
-        (ALL_CATEGORY_LABEL, "??"),
-    ] + [(category, category) for category in categories]
+    return [(ALL_CATEGORY_LABEL, ALL_CATEGORIES)] + [(category, category) for category in categories]
 
 
 def author_choices():
@@ -440,10 +437,7 @@ def author_choices():
     cur.execute("SELECT DISTINCT author FROM quotes ORDER BY author")
     authors = [row[0] for row in cur.fetchall()]
     conn.close()
-    return [
-        (ALL_AUTHORS_LABEL, ALL_AUTHORS),
-        (ALL_AUTHORS_LABEL, "?? ???"),
-    ] + [(author, author) for author in authors]
+    return [(ALL_AUTHORS_LABEL, ALL_AUTHORS)] + [(author, author) for author in authors]
 
 
 def tokenize_quote_text(text, include_stopwords=False):
@@ -1140,8 +1134,16 @@ def refresh_dashboard(
     selected_author = normalize_author_value(selected_author)
     return (
         quotes_dataframe(search_text, selected_category, selected_author),
-        gr.Dropdown(choices=category_choices(), value=selected_category),
-        gr.Dropdown(choices=author_choices(), value=selected_author),
+        gr.Dropdown(
+            choices=category_choices(),
+            value=selected_category,
+            allow_custom_value=True,
+        ),
+        gr.Dropdown(
+            choices=author_choices(),
+            value=selected_author,
+            allow_custom_value=True,
+        ),
         today_quote_text(),
     )
 
@@ -1159,11 +1161,13 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             label="카테고리",
             choices=category_choices(),
             value=ALL_CATEGORIES,
+            allow_custom_value=True,
         )
         author_filter = gr.Dropdown(
             label="작성자",
             choices=author_choices(),
             value=ALL_AUTHORS,
+            allow_custom_value=True,
         )
         refresh_btn = gr.Button("새로고침", variant="primary")
 
@@ -1206,6 +1210,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
                 label="퀴즈 카테고리",
                 choices=category_choices(),
                 value=ALL_CATEGORIES,
+                allow_custom_value=True,
             )
             quiz_btn = gr.Button("새 퀴즈 만들기", variant="primary")
             quiz_question_box = gr.Textbox(label="문제", lines=5, interactive=False)
@@ -1232,6 +1237,7 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
                     label="카테고리",
                     choices=category_choices(),
                     value=ALL_CATEGORIES,
+                    allow_custom_value=True,
                 )
                 card_style = gr.Dropdown(
                     label="카드 스타일",
