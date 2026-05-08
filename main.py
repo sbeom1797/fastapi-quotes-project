@@ -56,8 +56,10 @@ STOPWORDS = {
     "when", "where", "which", "who", "will", "with", "you", "your",
 }
 
-ALL_CATEGORIES = "전체"
-ALL_AUTHORS = "전체 작성자"
+ALL_CATEGORIES = "All"
+ALL_AUTHORS = "All Authors"
+ALL_CATEGORY_LABEL = "전체"
+ALL_AUTHORS_LABEL = "전체 작성자"
 
 
 class Quote(BaseModel):
@@ -354,7 +356,22 @@ def export_csv():
     )
 
 
-def quotes_dataframe(search_text="", category="All", author=ALL_AUTHORS, favorites_only=False):
+def normalize_category_value(category):
+    if category in (None, "", "All", ALL_CATEGORIES, ALL_CATEGORY_LABEL, "??"):
+        return ALL_CATEGORIES
+    return category
+
+
+def normalize_author_value(author):
+    if author in (None, "", ALL_AUTHORS, ALL_AUTHORS_LABEL, "?? ???"):
+        return ALL_AUTHORS
+    return author
+
+
+def quotes_dataframe(search_text="", category=ALL_CATEGORIES, author=ALL_AUTHORS, favorites_only=False):
+    category = normalize_category_value(category)
+    author = normalize_author_value(author)
+
     conn = get_connection()
     query = "SELECT id, text, author, category, favorite FROM quotes"
     params = []
@@ -365,7 +382,7 @@ def quotes_dataframe(search_text="", category="All", author=ALL_AUTHORS, favorit
         search_value = f"%{search_text}%"
         params.extend([search_value, search_value, search_value])
 
-    if category and category not in ("All", ALL_CATEGORIES):
+    if category != ALL_CATEGORIES:
         filters.append("category = ?")
         params.append(category)
 
@@ -402,7 +419,10 @@ def category_choices():
     cur.execute("SELECT DISTINCT category FROM quotes ORDER BY category")
     categories = [row[0] for row in cur.fetchall()]
     conn.close()
-    return [ALL_CATEGORIES] + categories
+    return [
+        (ALL_CATEGORY_LABEL, ALL_CATEGORIES),
+        (ALL_CATEGORY_LABEL, "??"),
+    ] + [(category, category) for category in categories]
 
 
 def author_choices():
@@ -411,7 +431,10 @@ def author_choices():
     cur.execute("SELECT DISTINCT author FROM quotes ORDER BY author")
     authors = [row[0] for row in cur.fetchall()]
     conn.close()
-    return [ALL_AUTHORS] + authors
+    return [
+        (ALL_AUTHORS_LABEL, ALL_AUTHORS),
+        (ALL_AUTHORS_LABEL, "?? ???"),
+    ] + [(author, author) for author in authors]
 
 
 def tokenize_quote_text(text, include_stopwords=False):
@@ -423,9 +446,10 @@ def tokenize_quote_text(text, include_stopwords=False):
 
 
 def word_count_records(limit=10, include_stopwords=False, selected_category=ALL_CATEGORIES):
+    selected_category = normalize_category_value(selected_category)
     conn = get_connection()
     cur = conn.cursor()
-    if selected_category and selected_category != ALL_CATEGORIES:
+    if selected_category != ALL_CATEGORIES:
         cur.execute("SELECT text FROM quotes WHERE category = ?", (selected_category,))
     else:
         cur.execute("SELECT text FROM quotes")
@@ -727,7 +751,8 @@ def length_bucket_dataframe():
 
 
 def random_quote_text(selected_category=ALL_CATEGORIES):
-    category = None if selected_category in ("All", ALL_CATEGORIES) else selected_category
+    selected_category = normalize_category_value(selected_category)
+    category = None if selected_category == ALL_CATEGORIES else selected_category
     try:
         quote = random_quote(category)
     except HTTPException:
@@ -740,7 +765,8 @@ def today_quote_text():
 
 
 def quiz_question(selected_category=ALL_CATEGORIES):
-    category = None if selected_category in ("All", ALL_CATEGORIES) else selected_category
+    selected_category = normalize_category_value(selected_category)
+    category = None if selected_category == ALL_CATEGORIES else selected_category
     conn = get_connection()
     cur = conn.cursor()
 
@@ -867,6 +893,7 @@ CARD_STYLES = {
 
 
 def select_quote_for_card(quote_id=None, category=ALL_CATEGORIES):
+    category = normalize_category_value(category)
     conn = get_connection()
     cur = conn.cursor()
 
@@ -875,7 +902,7 @@ def select_quote_for_card(quote_id=None, category=ALL_CATEGORIES):
             "SELECT id, text, author, category FROM quotes WHERE id = ?",
             (int(quote_id),),
         )
-    elif category and category not in ("All", ALL_CATEGORIES):
+    elif category != ALL_CATEGORIES:
         cur.execute(
             "SELECT id, text, author, category FROM quotes WHERE category = ? ORDER BY RANDOM() LIMIT 1",
             (category,),
@@ -1006,6 +1033,7 @@ def word_count_plot_with_options(
     include_stopwords=False,
     selected_category=ALL_CATEGORIES,
 ):
+    selected_category = normalize_category_value(selected_category)
     df = word_count_dataframe(limit, include_stopwords, selected_category)
     category_label = "" if selected_category == ALL_CATEGORIES else f" - {selected_category}"
     return plot_word_frequency(df, f"Top {int(limit)} Words{category_label}")
@@ -1074,6 +1102,7 @@ def category_word_stats_plot(include_stopwords=False):
 
 
 def refresh_analytics(word_limit=10, include_stopwords=False, selected_category=ALL_CATEGORIES):
+    selected_category = normalize_category_value(selected_category)
     return (
         summary_text(),
         word_count_dataframe(word_limit, include_stopwords, selected_category),
@@ -1098,6 +1127,8 @@ def refresh_dashboard(
     word_limit=10,
     include_stopwords=False,
 ):
+    selected_category = normalize_category_value(selected_category)
+    selected_author = normalize_author_value(selected_author)
     return (
         quotes_dataframe(search_text, selected_category, selected_author),
         gr.Dropdown(choices=category_choices(), value=selected_category),
@@ -1356,4 +1387,4 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
     )
 
 
-app = gr.mount_gradio_app(app, gradio_app, path="/gradio")
+app = gr.mount_gradio_app(app, gradio_app, path="/gradio", root_path="/gradio")
