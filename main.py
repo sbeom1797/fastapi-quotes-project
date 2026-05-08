@@ -21,11 +21,13 @@ from matplotlib import font_manager
 
 
 AVAILABLE_FONTS = {font.name for font in font_manager.fontManager.ttflist}
-for font_name in ("Noto Sans CJK KR", "Malgun Gothic", "DejaVu Sans"):
+for font_name in ("DejaVu Sans", "Noto Sans CJK KR", "Malgun Gothic"):
     if font_name in AVAILABLE_FONTS:
         plt.rcParams["font.family"] = font_name
         break
 plt.rcParams["axes.unicode_minus"] = False
+
+PLOT_CATEGORY_LIMIT = 20
 
 API_TAGS = [
     {"name": "홈", "description": "서비스 첫 화면과 주요 링크입니다."},
@@ -279,8 +281,13 @@ def delete_quote(quote_id: int = Path(..., description="삭제할 명언 ID입�
 def word_count(
     limit: int = Query(10, ge=1, le=100, description="조회할 상위 단어 개수입니다."),
     include_stopwords: bool = Query(False, description="the, and 같은 흔한 단어를 포함할지 선택합니다."),
+    category: str = Query(ALL_CATEGORIES, description="분석할 카테고리입니다."),
 ):
-    return word_count_records(limit=limit, include_stopwords=include_stopwords)
+    return word_count_records(
+        limit=limit,
+        include_stopwords=include_stopwords,
+        selected_category=category,
+    )
 
 
 @app.get(
@@ -415,10 +422,13 @@ def tokenize_quote_text(text, include_stopwords=False):
     return [word for word in words if word not in STOPWORDS and len(word) > 1]
 
 
-def word_count_records(limit=10, include_stopwords=False):
+def word_count_records(limit=10, include_stopwords=False, selected_category=ALL_CATEGORIES):
     conn = get_connection()
     cur = conn.cursor()
-    cur.execute("SELECT text FROM quotes")
+    if selected_category and selected_category != ALL_CATEGORIES:
+        cur.execute("SELECT text FROM quotes WHERE category = ?", (selected_category,))
+    else:
+        cur.execute("SELECT text FROM quotes")
     rows = cur.fetchall()
     conn.close()
 
@@ -569,9 +579,9 @@ def favorites_dataframe():
     return quotes_dataframe(favorites_only=True)
 
 
-def word_count_dataframe(limit=10, include_stopwords=False):
+def word_count_dataframe(limit=10, include_stopwords=False, selected_category=ALL_CATEGORIES):
     return pd.DataFrame(
-        word_count_records(limit, include_stopwords),
+        word_count_records(limit, include_stopwords, selected_category),
         columns=["word", "count"],
     ).rename(
         columns={
@@ -579,6 +589,64 @@ def word_count_dataframe(limit=10, include_stopwords=False):
             "count": "빈도",
         }
     )
+
+
+def category_word_counters(include_stopwords=False):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT category, text FROM quotes ORDER BY category")
+    rows = cur.fetchall()
+    conn.close()
+
+    counters = {}
+    for category, text in rows:
+        counters.setdefault(category, Counter()).update(
+            tokenize_quote_text(text, include_stopwords)
+        )
+    return counters
+
+
+def category_word_frequency_dataframe(limit=10, include_stopwords=False):
+    records = []
+    for category, counter in category_word_counters(include_stopwords).items():
+        total_words = sum(counter.values())
+        for word, count in counter.most_common(max(1, int(limit))):
+            records.append(
+                {
+                    "카테고리": category,
+                    "단어": word,
+                    "빈도": count,
+                    "비율(%)": round((count / total_words) * 100, 2) if total_words else 0,
+                }
+            )
+
+    return pd.DataFrame(
+        records,
+        columns=["카테고리", "단어", "빈도", "비율(%)"],
+    )
+
+
+def category_word_stats_dataframe(include_stopwords=False):
+    records = []
+    for category, counter in category_word_counters(include_stopwords).items():
+        total_words = sum(counter.values())
+        unique_words = len(counter)
+        top_word, top_count = counter.most_common(1)[0] if counter else ("", 0)
+        records.append(
+            {
+                "카테고리": category,
+                "총 단어 수": total_words,
+                "고유 단어 수": unique_words,
+                "평균 빈도": round(total_words / unique_words, 2) if unique_words else 0,
+                "최빈 단어": top_word,
+                "최빈 빈도": top_count,
+            }
+        )
+
+    return pd.DataFrame(
+        records,
+        columns=["카테고리", "총 단어 수", "고유 단어 수", "평균 빈도", "최빈 단어", "최빈 빈도"],
+    ).sort_values("평균 빈도", ascending=False)
 
 
 def category_count_dataframe():
@@ -865,58 +933,160 @@ def summary_text():
     )
 
 
-def plot_dataframe(df, x_column, y_column, title, color):
-    fig, ax = plt.subplots(figsize=(8, 4.5))
+def shorten_plot_label(value, max_length=24):
+    text = str(value)
+    if len(text) <= max_length:
+        return text
+    return f"{text[: max_length - 3]}..."
+
+
+def plot_dataframe(
+    df,
+    x_column,
+    y_column,
+    title,
+    color,
+    x_label=None,
+    y_label=None,
+    horizontal=False,
+    limit=None,
+):
+    plot_df = df.copy()
+    if limit and not plot_df.empty:
+        plot_df = plot_df.sort_values(y_column, ascending=False).head(int(limit))
+
+    height = max(4.5, len(plot_df) * 0.32) if horizontal else 4.5
+    fig, ax = plt.subplots(figsize=(8, height))
     if df.empty:
-        ax.text(0.5, 0.5, "데이터 없음", ha="center", va="center")
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
         ax.set_axis_off()
         return fig
 
-    ax.bar(df[x_column].astype(str), df[y_column], color=color)
+    if horizontal:
+        plot_df = plot_df.sort_values(y_column, ascending=True)
+        labels = plot_df[x_column].map(shorten_plot_label)
+        ax.barh(labels, plot_df[y_column], color=color)
+        ax.grid(axis="x", alpha=0.2)
+    else:
+        labels = plot_df[x_column].map(shorten_plot_label)
+        ax.bar(labels, plot_df[y_column], color=color)
+        ax.tick_params(axis="x", rotation=35)
+
     ax.set_title(title)
-    ax.set_xlabel(x_column)
-    ax.set_ylabel(y_column)
-    ax.tick_params(axis="x", rotation=35)
+    ax.set_xlabel(x_label or x_column)
+    ax.set_ylabel(y_label or y_column)
+    fig.tight_layout()
+    return fig
+
+
+def plot_word_frequency(df, title):
+    fig, ax = plt.subplots(figsize=(8, 4.5))
+    if df.empty:
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_axis_off()
+        return fig
+
+    plot_df = df.sort_values("빈도", ascending=True)
+    ax.barh(plot_df["단어"].astype(str), plot_df["빈도"], color="#0f766e")
+    ax.set_title(title)
+    ax.set_xlabel("Frequency")
+    ax.set_ylabel("Word")
+    ax.grid(axis="x", alpha=0.2)
     fig.tight_layout()
     return fig
 
 
 def word_count_plot():
     df = word_count_dataframe(10)
-    return plot_dataframe(df, "단어", "빈도", "상위 10개 단어", "#0f766e")
+    return plot_word_frequency(df, "Top 10 Words")
 
 
-def word_count_plot_with_options(limit=10, include_stopwords=False):
-    df = word_count_dataframe(limit, include_stopwords)
-    return plot_dataframe(df, "단어", "빈도", f"상위 {int(limit)}개 단어", "#0f766e")
+def word_count_plot_with_options(
+    limit=10,
+    include_stopwords=False,
+    selected_category=ALL_CATEGORIES,
+):
+    df = word_count_dataframe(limit, include_stopwords, selected_category)
+    category_label = "" if selected_category == ALL_CATEGORIES else f" - {selected_category}"
+    return plot_word_frequency(df, f"Top {int(limit)} Words{category_label}")
 
 
 def category_count_plot():
     df = category_count_dataframe()
-    return plot_dataframe(df, "카테고리", "개수", "카테고리별 명언 수", "#2563eb")
+    return plot_dataframe(
+        df,
+        "카테고리",
+        "개수",
+        f"Top {PLOT_CATEGORY_LIMIT} Categories by Quote Count",
+        "#2563eb",
+        x_label="Quotes",
+        y_label="Category",
+        horizontal=True,
+        limit=PLOT_CATEGORY_LIMIT,
+    )
 
 
 def author_count_plot():
     df = author_count_dataframe()
-    return plot_dataframe(df, "작성자", "개수", "상위 작성자", "#7c3aed")
+    return plot_dataframe(
+        df,
+        "작성자",
+        "개수",
+        "Top Authors by Quote Count",
+        "#7c3aed",
+        x_label="Quotes",
+        y_label="Author",
+        horizontal=True,
+    )
 
 
 def length_bucket_plot():
     df = length_bucket_dataframe()
-    return plot_dataframe(df, "길이 구간", "개수", "명언 길이 분포", "#ea580c")
+    return plot_dataframe(
+        df,
+        "길이 구간",
+        "개수",
+        "Quote Length Distribution",
+        "#ea580c",
+        x_label="Length bucket",
+        y_label="Quotes",
+    )
+
+
+def category_word_stats_plot(include_stopwords=False):
+    df = category_word_stats_dataframe(include_stopwords)
+    plot_df = df.sort_values("평균 빈도", ascending=False).head(PLOT_CATEGORY_LIMIT)
+    fig, ax = plt.subplots(figsize=(8, max(4.5, len(plot_df) * 0.32)))
+    if df.empty:
+        ax.text(0.5, 0.5, "No data", ha="center", va="center")
+        ax.set_axis_off()
+        return fig
+
+    plot_df = plot_df.sort_values("평균 빈도", ascending=True)
+    labels = plot_df["카테고리"].map(shorten_plot_label)
+    ax.barh(labels, plot_df["평균 빈도"], color="#14b8a6")
+    ax.set_title(f"Top {PLOT_CATEGORY_LIMIT} Categories by Average Word Frequency")
+    ax.set_xlabel("Average frequency")
+    ax.set_ylabel("Category")
+    ax.grid(axis="x", alpha=0.2)
+    fig.tight_layout()
+    return fig
 
 
 def refresh_analytics(word_limit=10, include_stopwords=False, selected_category=ALL_CATEGORIES):
     return (
         summary_text(),
-        word_count_dataframe(word_limit, include_stopwords),
+        word_count_dataframe(word_limit, include_stopwords, selected_category),
         category_count_dataframe(),
         author_count_dataframe(),
         longest_quotes_dataframe(5),
-        word_count_plot_with_options(word_limit, include_stopwords),
+        category_word_frequency_dataframe(word_limit, include_stopwords),
+        category_word_stats_dataframe(include_stopwords),
+        word_count_plot_with_options(word_limit, include_stopwords, selected_category),
         category_count_plot(),
         author_count_plot(),
         length_bucket_plot(),
+        category_word_stats_plot(include_stopwords),
         random_quote_text(selected_category),
     )
 
@@ -1045,10 +1215,14 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
             with gr.Row():
                 author_plot = gr.Plot(label="작성자별 개수")
                 length_plot = gr.Plot(label="길이 분포")
+            category_word_stats_plot_box = gr.Plot(label="카테고리별 단어 평균 빈도")
             with gr.Row():
                 word_table = gr.Dataframe(label="상위 단어", interactive=False)
                 category_table = gr.Dataframe(label="카테고리", interactive=False)
                 author_table = gr.Dataframe(label="상위 작성자", interactive=False)
+            with gr.Row():
+                category_word_table = gr.Dataframe(label="카테고리별 상위 단어 빈도", interactive=False)
+                category_word_stats_table = gr.Dataframe(label="카테고리별 단어 기초 통계", interactive=False)
             longest_table = gr.Dataframe(label="가장 긴 명언", interactive=False)
 
     refresh_outputs = [
@@ -1064,10 +1238,13 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         category_table,
         author_table,
         longest_table,
+        category_word_table,
+        category_word_stats_table,
         word_plot,
         category_plot,
         author_plot,
         length_plot,
+        category_word_stats_plot_box,
         random_quote_box,
     ]
 
@@ -1085,6 +1262,11 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         fn=refresh_dashboard,
         inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
+    )
+    category_filter.change(
+        fn=refresh_analytics,
+        inputs=[word_limit, include_stopwords, category_filter],
+        outputs=analytics_outputs,
     )
     author_filter.change(
         fn=refresh_dashboard,
@@ -1166,6 +1348,11 @@ with gr.Blocks(title="명언 프로젝트 대시보드") as gradio_app:
         fn=refresh_dashboard,
         inputs=[search_input, category_filter, author_filter],
         outputs=refresh_outputs,
+    )
+    gradio_app.load(
+        fn=refresh_analytics,
+        inputs=[word_limit, include_stopwords, category_filter],
+        outputs=analytics_outputs,
     )
 
 
